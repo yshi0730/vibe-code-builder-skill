@@ -39,16 +39,13 @@ https://github.com/storyclaw/workspace-reporter-skill@workspace
 
 **Fallback while we wait**: `publish-and-hire` will only publish; the user will need to manually click "雇佣" once on the web UI after build. UX is degraded but functional.
 
-### `OPEN_DESIGN_AI_ENDPOINT`
+### `OPEN_DESIGN_AI_ENDPOINT` — ✅ Resolved
 
-**Status**: 🔍 Needs investigation — does open-design.ai expose a public API, or do we scrape HTML?
+We pull directly from `nexu-io/open-design` GitHub repo via raw.githubusercontent.com (no API key needed, CDN-cached, ~50-300ms).
 
-**Where it appears**: `src/style-fetcher.ts`
+Implementation: `src/tools/fetch-style.ts`. Each app_type has a curated list of design system names (e.g. `linear-app`, `airtable`, `notion` for CRM); one is randomly picked per request to give visual variety. The DESIGN.md is parsed for hex codes (HSL-classified into palette roles) and typography (regex match against known font family names).
 
-**Plan**:
-1. Try their public site for `/api/*` endpoints first
-2. If none, scrape search results via cheerio
-3. If too slow/unreliable, hard-code 8-12 hand-picked styles in `assets/styles/*.json` and skip live fetch
+Tested against 12 design systems; all produce brand-appropriate palettes. See `tests/fetch-style.test.ts` for the smoke test.
 
 ## Optional / future configuration
 

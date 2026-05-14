@@ -20,13 +20,13 @@ Everything else — parsing the request, designing the data model, picking widge
 
 ### 1. `fetch_style`
 
-Fetch visual style (palette + typography + layout recipe) from open-design.ai or local fallback.
+Fetch visual style (palette + typography + layout recipe) from the `nexu-io/open-design` GitHub repo or local fallback. open-design is a local-first design tool repo containing **150+ brand-grade design systems** (apple, stripe, linear-app, notion, vercel, cohere, etc.) each as a structured `DESIGN.md` with explicit hex codes, typography, and role descriptions. We fetch one `DESIGN.md` per request and parse it.
 
 **Input:**
 ```json
 {
   "app_type": "CRM | calendar | billing | comparison | pricing-page | other",
-  "description": "free-text description of the app, used to refine search"
+  "description": "free-text description of the app (reserved for future use)"
 }
 ```
 
@@ -34,25 +34,30 @@ Fetch visual style (palette + typography + layout recipe) from open-design.ai or
 ```json
 {
   "palette": {
-    "primary": "#5B6CFF",
-    "secondary": "#FFB05A",
-    "accent": "#19C2A3",
-    "neutral": "#F3F4F6",
+    "primary": "#0070f3",
+    "secondary": "#0072f5",
+    "accent": "#eb367f",
+    "neutral": "#ffffff",
     "success": "#22C55E",
     "warning": "#F59E0B",
-    "danger": "#EF4444"
+    "danger": "#ff5b4f"
   },
-  "font_family": "Inter, 'PingFang SC', system-ui, sans-serif",
+  "font_family": "Roboto, 'PingFang SC', system-ui, sans-serif",
   "layout_recipe": "dashboard-grid",
-  "source_url": "https://open-design.ai/projects/xyz",
-  "source": "open-design.ai" | "local-fallback"
+  "source_url": "https://github.com/nexu-io/open-design/blob/main/design-systems/vercel/DESIGN.md",
+  "source": "open-design" | "local-fallback",
+  "source_system": "vercel"
 }
 ```
 
 **Behavior:**
-- 5-second timeout on open-design.ai
-- On timeout / parse failure: load `assets/styles/{app_type}.json` (curated fallback library)
-- Always returns a valid palette — never throws
+1. Each app_type maps to a curated list of design systems (e.g. CRM → linear-app, airtable, notion, cohere, clean, application)
+2. Randomly pick one for variety across requests
+3. Fetch `https://raw.githubusercontent.com/nexu-io/open-design/main/design-systems/{name}/DESIGN.md` (5s timeout)
+4. Extract all hex codes, classify by HSL into primary/secondary/accent/neutral/success/warning/danger
+5. Detect font family by matching well-known names (SF Pro, Inter, Geist, Roboto, Poppins, etc.)
+6. On fetch failure / too few colors: try one alternate system, then fall back to `assets/styles/{app_type}.json`
+7. Always returns a valid palette — never throws
 
 ### 2. `register_dashboard_module`
 
