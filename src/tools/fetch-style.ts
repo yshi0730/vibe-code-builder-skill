@@ -3,21 +3,12 @@ import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { VALID_APP_TYPES, type AppType } from "../types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ASSETS_DIR = join(__dirname, "../../assets/styles");
 const TIMEOUT_MS = 5_000;
-
-const VALID_APP_TYPES = [
-  "CRM",
-  "calendar",
-  "billing",
-  "comparison",
-  "pricing-page",
-  "other",
-] as const;
-type AppType = (typeof VALID_APP_TYPES)[number];
 
 /**
  * Map app archetype → recommended design systems from nexu-io/open-design.

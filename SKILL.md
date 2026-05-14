@@ -91,7 +91,34 @@ Atomically register a new dashboard module + all its widgets in `~/.claw/shared/
 - Single transaction: rollback on any widget failure
 - Returns the generated `module_id` for use in `dashboard_url` and template substitution
 
-### 3. `publish_and_hire`
+### 3. `fetch_template`
+
+Fetch a real HTML template from `nexu-io/open-design/design-templates/`. Each template directory contains a self-contained `example.html` with sidebar + topbar + KPI grid + panels + tables, using CSS variables (`--accent`, `--good`, `--bad`) so recoloring is a 3-line edit.
+
+**Input:**
+```json
+{ "app_type": "CRM | calendar | billing | comparison | pricing-page | other" }
+```
+
+**Output:**
+```json
+{
+  "template_name": "dashboard",
+  "html": "<!doctype html>...full HTML...",
+  "source_url": "https://github.com/nexu-io/open-design/tree/main/design-templates/dashboard",
+  "source": "open-design" | "local-fallback"
+}
+```
+
+**Behavior:**
+1. Each `app_type` maps to an ordered list of candidate templates (CRM → `dashboard`, billing → `finance-report` then `dashboard`, pricing → `pricing-page` then `dashboard`, etc.)
+2. Try each in order until one fetches successfully (5s timeout each)
+3. On all-failure: load bundled `assets/templates/dashboard.html` (snapshot of the dashboard template)
+4. Always returns a valid HTML — never throws
+
+The agent then customizes the HTML (swap CSS variables to match `fetch_style` palette, swap mock content for real data). The structure itself is preserved.
+
+### 4. `publish_and_hire`
 
 Run `talenthub agent publish` on the generated agent dir, then auto-hire it for the requesting user. Handles auth via the `talenthub` CLI's existing credentials.
 
@@ -123,7 +150,7 @@ Run `talenthub agent publish` on the generated agent dir, then auto-hire it for 
 
 ## How the agent does the rest
 
-The agent reads its `USER.md` pipeline and follows it. The pipeline reasons through these steps without calling tools:
+The agent reads its `USER.md` pipeline and follows it. The pipeline reasons through these steps without calling extra tools (beyond the 4 above):
 
 - **Parse the requirement** — extract `app_name`, `agent_id_slug`, `purpose`, `data_model`, `key_widgets`, `agent_persona`, `assumptions`. Output as a JSON object in the agent's response (visible to runtime logs).
 - **Compose widgets** — pick widget types from the dashboard skill's catalog (see below) and populate `config` + realistic `sample_data` rows. Match widget choices to the data model:

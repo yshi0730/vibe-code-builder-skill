@@ -102,14 +102,43 @@ See SKILL.md "Generated agent: variables expected by the templates" for the full
 
 **Important**: `{{WORKSPACE_SKILL_URL}}` is currently a placeholder (see CONFIG.md). Substitute the value from `CONFIG.md` or, if it's still TBD, leave it as the literal string `{{WORKSPACE_SKILL_URL}}` — the runtime team will fix this before first use.
 
-### 7. Write sample workspace artifact
+### 7a. Fetch a real HTML template (tool call)
 
-Generate one self-contained HTML file (no external CSS, no JS frameworks — just inline `<style>` using the palette + font from step 3). The file shows what a "week 1 report" looks like for this app: real-looking numbers, the table of records, 1-2 charts (use simple `<svg>` or styled divs — not Chart.js, keep it self-contained).
+Call `fetch_template` with the same `app_type` you used for `fetch_style`. Returns:
 
-Write to:
-`{workspace_root}/workspace-{agent_id}/files/{app_name_slug}-样例周报.html`
+- `template_name` (e.g., `"dashboard"`, `"finance-report"`)
+- `html` (raw `example.html` from `nexu-io/open-design/design-templates/{template_name}/`)
+- `source_url`
+- `source` (`"open-design"` or `"local-fallback"`)
 
-Use Write tool directly. Filename language matches `locale`.
+The HTML uses CSS variables (`--bg`, `--fg`, `--accent`, `--good`, `--bad`, etc.) and includes a working sidebar + topbar + KPI grid + panels + tables. **Do not invent layout from scratch — that's the whole point of fetching this.**
+
+### 7b. Customize template + write sample workspace artifact
+
+Take the `html` from 7a and customize:
+
+1. **Swap CSS variables** in `:root { ... }` to match the palette from step 3:
+   - `--accent` (template's primary action color) → `palette.primary`
+   - `--good` (success) → `palette.success`
+   - `--bad` (danger / error) → `palette.danger`
+   - Keep `--bg`, `--fg`, `--muted`, `--border` as-is (the template author tuned them for neutrality)
+   - Also update any hardcoded hex codes inside SVG `stroke`/`fill` attributes that match the old `--accent` → swap to the new primary
+2. **Swap typography**: change the `font:` declaration in `body { ... }` to use `font_family` from step 3.
+3. **Replace English mock content** with localized real data:
+   - Brand text in the sidebar (e.g. `◐ Pulse`) → `{persona.emoji} {persona.name}`
+   - Topbar title → app-specific title in user's locale
+   - Sidebar nav links → 6-8 entries relevant to this app
+   - KPI blocks → the 4 KPI widgets from step 2 (label + value + delta)
+   - Chart `<svg>` → rewrite `points` for the actual trend data from step 2's bar/line widget
+   - Tables (`<tbody>`) → use `sample_data` from step 2
+   - Activity rows: include AI-reasoning blocks (a `<div class="ai-block">` with blue left border) for any `logic` field — this is the differentiator from a normal CRM dashboard
+4. **Add a source badge** in the topbar so the user can see what design system + template were used:
+   ```html
+   <span class="source-badge">配色源自 <a href="{style.source_url}">{style.source_system}</a> · 模板源自 <a href="{template.source_url}">{template.template_name}</a></span>
+   ```
+5. **Write** to `{workspace_root}/workspace-{agent_id}/files/{app_name}-样例周报.html` (filename in user's locale).
+
+The result is a polished HTML that uses real design-system aesthetic + your specific data, ready for the user to see in their workspace panel.
 
 ### 8. Publish and auto-hire (tool call)
 
