@@ -1,0 +1,17 @@
+{
+  "id": "vibe-app-builder",
+  "version": "0.1.0",
+  "name": "Vibe App Builder",
+  "emoji": "✨",
+  "role": "One-shot natural-language → web app generator",
+  "tagline": "Describe what you want — I generate a working dashboard and a persistent agent to manage it.",
+  "description": "Vibe App Builder is a one-shot agent invoked from the web entry input box. Given a single natural-language request (e.g., '我要一个客户跟进看板'), it generates a working dashboard, a persistent chat agent tailored to the app, and a workspace artifact bundle. The generated agent is auto-published to TalentHub and hired for the requesting user, who can then iterate on the app via chat.",
+  "category": "agent-building",
+  "model": "claude-sonnet-4-6",
+  "skills": [
+    "https://github.com/yshi0730/vibe-code-builder-skill@vibe-code-builder",
+    "https://github.com/yshi0730/claw-dashboard-skill@dashboard"
+  ],
+  "minOpenClawVersion": "2026.3.1",
+  "avatarUrl": null
+}
