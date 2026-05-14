@@ -12,109 +12,23 @@ metadata:
 
 # Vibe Code Builder Skill
 
-This skill is invoked once per user request. It runs a 9-step pipeline that converts a natural-language requirement into a complete, deployed app.
+The agent (Claude) does the reasoning. This skill provides only the **3 IO-bound tools** the agent can't do well on its own: fetching visual styles from the web, writing transactionally to the shared dashboard DB, and publishing the generated agent through `talenthub`.
 
-## Pipeline overview
-
-```
-INPUT: { request, user_id, device_serial, workspace_root, locale }
-  ↓
-[1] parse-requirement      → semantic schema (entities, fields, widgets, persona)
-[2] compose-widgets        → concrete widget configs + sample data
-[3] fetch-style            → palette + typography + layout (from open-design.ai)
-[4] (local) generate agent_id
-[5] register-dashboard-module → write to shared.db (module + widgets)
-[6] generate-agent-files   → render templates → manifest.json + IDENTITY/USER/SOUL
-[7] write-sample-artifact  → HTML sample report in workspace
-[8] publish-and-hire       → talenthub publish + auto-hire for user
-[9] (local) emit summary JSON
-```
+Everything else — parsing the request, designing the data model, picking widgets, generating sample data, rendering template files, writing the sample HTML report — is done by the agent directly via prompt + Read/Write.
 
 ## Tools
 
-### parse-requirement
+### 1. `fetch_style`
 
-Parse natural-language requirement into a semantic schema.
+Fetch visual style (palette + typography + layout recipe) from open-design.ai or local fallback.
 
 **Input:**
-- `text` (string): user's requirement, e.g., "我要一个客户跟进看板"
-- `locale` ("zh-CN" | "en")
-
-**Output (JSON):**
 ```json
 {
-  "app_name": "客户跟进看板",
-  "agent_id_slug": "customer-followup",
-  "purpose": "管理潜在客户和销售线索，记录联系状态和跟进计划",
-  "data_model": [
-    {
-      "entity": "customer",
-      "fields": [
-        {"name": "name", "type": "string", "required": true, "description": "联系人姓名"},
-        {"name": "company", "type": "string", "required": false, "description": "公司"},
-        {"name": "phone", "type": "string", "required": false, "description": "电话"},
-        {"name": "stage", "type": "enum", "values": ["冷线","温线","热线","已签约","已流失"], "required": true, "description": "客户阶段"},
-        {"name": "last_contact", "type": "date", "required": false, "description": "上次联系日期"},
-        {"name": "next_followup", "type": "date", "required": false, "description": "下次跟进日期"},
-        {"name": "notes", "type": "text", "required": false, "description": "备注"}
-      ]
-    }
-  ],
-  "key_widgets": ["kpi_card", "table", "pie_chart", "bar_chart", "activity_log"],
-  "agent_persona": {
-    "name": "客户跟进助理",
-    "vibe": "实用、主动提醒、帮你记录每次跟进的关键点",
-    "emoji": "📇",
-    "language": "zh-CN"
-  },
-  "assumptions": ["未指定 CRM 阶段, 默认采用冷线/温线/热线/已签约/已流失"]
+  "app_type": "CRM | calendar | billing | comparison | pricing-page | other",
+  "description": "free-text description of the app, used to refine search"
 }
 ```
-
-Implementation: `src/parser.ts` — calls Claude with a structured-output prompt + JSON schema validation.
-
-### compose-widgets
-
-Generate concrete widget configs from a data model.
-
-**Input:** `app_name`, `data_model`, `key_widgets`
-
-**Output:**
-```json
-{
-  "widgets": [
-    {
-      "type": "kpi_card",
-      "title": "本周新增联系人",
-      "config": {"subtitle": "{count} 待跟进", "trend": "up"},
-      "data": [12],
-      "position": 0
-    },
-    {
-      "type": "table",
-      "title": "客户列表",
-      "config": {},
-      "data": [<sample rows>],
-      "position": 4
-    }
-    // ...
-  ],
-  "sample_data": {
-    "customer": [
-      {"name": "张总", "company": "字节跳动", "phone": "138...", "stage": "温线", ...},
-      // 10-15 rows
-    ]
-  }
-}
-```
-
-Implementation: `src/widget-composer.ts` — rule-based composition (one entity → table widget; enum field → pie chart; date field → trend bar chart) + Claude-driven KPI selection.
-
-### fetch-style
-
-Fetch visual style from open-design.ai or local fallback.
-
-**Input:** `app_type` (e.g., "CRM"), `description`
 
 **Output:**
 ```json
@@ -130,82 +44,233 @@ Fetch visual style from open-design.ai or local fallback.
   },
   "font_family": "Inter, 'PingFang SC', system-ui, sans-serif",
   "layout_recipe": "dashboard-grid",
-  "source_url": "https://open-design.ai/projects/xyz" 
+  "source_url": "https://open-design.ai/projects/xyz",
+  "source": "open-design.ai" | "local-fallback"
 }
 ```
 
-Implementation: `src/style-fetcher.ts`. Behavior:
-1. Build a search query from `app_type` + `description`
-2. Query open-design.ai (5s timeout)
-3. Pick top match, extract palette via DOM scrape or their API (TBD — depends on what open-design.ai exposes)
-4. On timeout/error: load `assets/styles/{layout_recipe}.json` fallback
+**Behavior:**
+- 5-second timeout on open-design.ai
+- On timeout / parse failure: load `assets/styles/{app_type}.json` (curated fallback library)
+- Always returns a valid palette — never throws
 
-### register-dashboard-module
+### 2. `register_dashboard_module`
 
-Insert a dashboard module + widget rows into `~/.claw/shared/shared.db`. Transactional.
+Atomically register a new dashboard module + all its widgets in `~/.claw/shared/shared.db`. Transactional — module + widgets succeed together or both rollback.
 
-**Input:** `agent_id`, `module_name`, `icon`, `widgets` (from compose-widgets output)
+**Input:**
+```json
+{
+  "agent_id": "vibe-customer-followup-x7k3pa",
+  "module_name": "客户跟进看板",
+  "icon": "📇",
+  "widgets": [
+    {
+      "type": "kpi_card",
+      "title": "本周新增联系人",
+      "config": {"subtitle": "5 待跟进", "trend": "up"},
+      "data": [12],
+      "position": 0
+    }
+  ]
+}
+```
 
-**Output:** `module_id`
+**Output:**
+```json
+{ "module_id": "abc12345" }
+```
 
-Implementation: `src/dashboard-register.ts` — wraps the dashboard skill's existing `dashboard_register_module` + bulk widget inserts in a single transaction.
+**Behavior:**
+- Creates `dashboard_modules` and `dashboard_widgets` tables if missing
+- Single transaction: rollback on any widget failure
+- Returns the generated `module_id` for use in `dashboard_url` and template substitution
 
-### generate-agent-files
+### 3. `publish_and_hire`
 
-Render templates into a generated agent's prompt file bundle.
+Run `talenthub agent publish` on the generated agent dir, then auto-hire it for the requesting user. Handles auth via the `talenthub` CLI's existing credentials.
 
-**Input:** all collected fields (app_name, agent_id, persona, data_model, widgets, style, module_id, workspace_path, dashboard_url) + `output_dir`
+**Input:**
+```json
+{
+  "agent_dir": "/path/to/generated/agent",
+  "user_id": "u-abc123",
+  "rollback_module_id": "abc12345"
+}
+```
 
-**Output:** writes 4 files to `output_dir`:
-- `manifest.json`
-- `IDENTITY.md`
-- `USER.md`
-- `SOUL.md`
+**Output:**
+```json
+{
+  "agent_id": "vibe-customer-followup-x7k3pa",
+  "registry_version": "v2026.05.13-1",
+  "dashboard_url": "https://device-xxx.clawln.app/m/abc12345"
+}
+```
 
-Templates: `templates/generated-agent/*.tpl` — Jinja2-style placeholders `{{VAR}}`.
+**Behavior:**
+- Validates agent dir has manifest.json + IDENTITY.md before publishing
+- Captures `talenthub publish` stdout for the registry version string
+- Calls auto-hire endpoint (TBD — see CONFIG.md)
+- On publish failure: deletes the dashboard module via `rollback_module_id` so we don't leave orphan rows
 
-Implementation: `src/agent-generator.ts`.
+---
 
-### write-sample-artifact
+## How the agent does the rest
 
-Generate a sample HTML report and write it into the workspace.
+The agent reads its `USER.md` pipeline and follows it. The pipeline reasons through these steps without calling tools:
 
-**Input:** `app_name`, `data_model`, `sample_data`, `style`, `workspace_path`
+- **Parse the requirement** — extract `app_name`, `agent_id_slug`, `purpose`, `data_model`, `key_widgets`, `agent_persona`, `assumptions`. Output as a JSON object in the agent's response (visible to runtime logs).
+- **Compose widgets** — pick widget types from the dashboard skill's catalog (see below) and populate `config` + realistic `sample_data` rows. Match widget choices to the data model:
+  - Each entity → 1 table widget showing rows
+  - Each enum field → 1 pie chart of value distribution
+  - Each date field → 1 bar chart of weekly trend
+  - Up to 4 KPI cards for top-of-mind numbers
+  - 1 activity log if the app has an event/log nature
+- **Render templates** — Read each `templates/generated-agent/*.tpl`, substitute `{{VAR}}` placeholders inline, Write to `{output_dir}/{filename}`.
+- **Write sample HTML report** — generate a self-contained HTML using the fetched palette + font + 3-5 realistic data points, Write to `{workspace_path}/files/{app-name}-样例报告.html`.
 
-**Output:** absolute path to the HTML file written
+The agent **only** calls tools for: fetching style, writing the dashboard DB, publishing.
 
-Implementation: `src/sample-artifact.ts`. Generates a single self-contained HTML file showing what a "week 1 report" would look like for this app. Uses the fetched style.
+---
 
-### publish-and-hire
+## Widget catalog reference
 
-Publish the generated agent to TalentHub and auto-hire it for the requesting user.
+These are the widget types supported by `claw-dashboard-skill`. The agent picks from this list.
 
-**Input:** `output_dir`, `user_id`
+| Type | Data shape | Config keys | Best for |
+|------|------------|-------------|----------|
+| `kpi_card` | `[number]` | `prefix`, `suffix`, `trend`, `subtitle`, `tag`, `tag_color` | Headline numbers (count, total, %) |
+| `table` | `[{col: val, ...}, ...]` | none — columns inferred from keys | Lists of records |
+| `pie_chart` | `[val1, val2, ...]` | `labels[]`, `colors[]` | Distribution of an enum field |
+| `bar_chart` | `[v1, v2, ...]` | `labels[]`, `color` | Trend over discrete buckets |
+| `line_chart` | `[v1, v2, ...]` | `labels[]`, `color`, `dataset_label`, `prefix` | Trend over time |
+| `activity_log` | `[{time, action, ...}, ...]` | none | Event stream with optional `logic` AI-reasoning blocks |
+| `strategy_list` | `[{name, description, status}]` | none | Running processes / rules |
+| `stat_row` | `[{label, value}, ...]` | none | Compact stats grid |
+| `text` | `[string]` | none | Notes, banners, instructions |
 
-**Output:** `agent_id`, `version` (registry version assigned), `dashboard_url`
+**A column named `"Logic"` or `"Reasoning"` in a table renders with a blue left-border as an AI-reasoning block.**
 
-Implementation: `src/publisher.ts`. Wraps `talenthub agent publish --dir <output_dir>` + auto-hire API call (auto-hire endpoint TBD — colleague's runtime piece). Tracks all created resources for rollback.
+---
 
-## Generated agent design
+## App archetype reference
 
-The generated agent's manifest references:
-- `claw-dashboard-skill` (so it can update widgets / add data)
-- `workspace-skill` (TBD — placeholder until colleague provides the URL; see CONFIG.md)
+Day-1 target is **CRM (客户跟进看板)**. The other 4 are sketched as one-paragraph hints — the agent's reasoning fills in details for those when triggered.
 
-The generated agent's USER.md is templated to include:
-- Its specific app context (entity schema, dashboard module_id, workspace path)
-- Iteration instructions ("when user adds a record, write to widget data; when user asks for a report, generate HTML in workspace")
-- A "first interaction" hint (be brief — user already saw the dashboard)
+### 🎯 CRM / 客户跟进看板 (full recipe — day 1)
 
-It does NOT have a WAKE-UP-INTRO.md. The first interaction is shaped by the persona in IDENTITY.md + USER.md context.
+**Triggers**: "客户跟进", "销售看板", "联系人管理", "sales pipeline", "CRM"
 
-## Lite Builder (subset, used by generated agents)
+**Entity**: `customer`
 
-The generated agent doesn't need the full builder skill. It just needs to mutate its own dashboard / workspace. These mutation operations are provided through the **existing** dashboard-skill tools (`update_widget`, `add_widget`, etc.) — no separate "lite builder" skill is needed.
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | 联系人姓名 |
+| `company` | string | no | 公司 |
+| `phone` | string | no | 电话 |
+| `stage` | enum: 冷线/温线/热线/已签约/已流失 | yes | 阶段 |
+| `last_contact` | date | no | 上次联系 |
+| `next_followup` | date | no | 下次跟进 |
+| `notes` | text | no | 备注 |
 
-The agent's USER.md tells it how to invoke those tools for common iteration patterns:
-- "add a phone field" → fetch existing table widget, append column, write back
-- "show me X by month" → add a new bar_chart widget aggregating data
-- "export to CSV" → query data, write CSV to workspace
+**Widgets** (8 total, in this order):
 
-If a user request goes beyond mutation (e.g., "actually I want this to be a kanban instead of a table"), the generated agent should suggest the user go back to the web entry point to "create a new app". This boundary keeps the iteration surface small and predictable.
+1. `kpi_card` "本周新增联系人" — count of customers created in last 7 days, subtitle: "{n} 待跟进"
+2. `kpi_card` "需跟进客户" — count where `next_followup <= today + 3 days`, trend
+3. `kpi_card` "本月转化率" — `(已签约 / total touched this month) * 100`, suffix: %
+4. `kpi_card` "本月新增" — count of customers created this month
+5. `table` "客户列表" — full customer table; columns: 姓名/公司/电话/阶段/上次联系/下次跟进/备注
+6. `pie_chart` "客户阶段分布" — counts per stage
+7. `bar_chart` "8 周新增趋势" — weekly counts
+8. `activity_log` "最近跟进" — sample log entries with AI-suggested next action
+
+**Sample data**: 10-15 customers with realistic Chinese names + companies (e.g., "张总 / 字节跳动 / 温线"). Mix stages roughly: 3 冷线, 4 温线, 3 热线, 2 已签约, 1 已流失.
+
+**Agent persona**:
+- name: "客户跟进助理"
+- emoji: 📇
+- vibe: "实用、主动提醒、帮你记录每次跟进的关键点"
+- category: `marketing-growth`
+
+### 📅 Content Calendar / 内容排期面板
+
+**Triggers**: "内容排期", "发布计划", "content calendar"
+
+Entity: `post` — title, platform (enum), publish_date, status (enum: 草稿/已排期/已发布), content, performance_metrics
+
+Widgets: KPI(本周排期数, 待发布数, 上周阅读量), table(内容列表), pie(平台分布), line(每周阅读量趋势)
+
+Persona: 内容排期助理 📅, category: `content-operations`
+
+### 💰 Billing / 家庭账单记录器
+
+**Triggers**: "家庭账单", "记账", "billing tracker", "支出记录"
+
+Entity: `expense` — date, amount, category (enum), description, payer
+
+Widgets: KPI(本月支出, 同比, 大宗支出占比), table(支出明细), pie(分类占比), bar(月度趋势)
+
+Persona: 家庭账单助理 💰, category: `personal-assistant`
+
+### 🛒 Purchase Comparison / 采购比价工具
+
+**Triggers**: "采购比价", "价格对比", "供应商比较"
+
+Entity: `option` — vendor, product_name, price, currency, lead_time, rating, link
+
+Widgets: KPI(最低价, 最快交期), table(比价表 — 含 price/lead_time/rating 三列), stat_row(供应商数 / 平均价格)
+
+Persona: 采购比价助手 🛒, category: `marketing-growth`
+
+### 📊 Pricing Page / AI API 经销商报价页
+
+**Triggers**: "API 报价", "经销商报价", "pricing page", "服务报价"
+
+Entity: `tier` — name, price_monthly, included_quota, overage_rate, target_audience, features (text)
+
+Widgets: table(三档对比 — 字段横向), stat_row(总月费/总额度), text(SLA / 售后条款)
+
+Persona: 报价页助理 📊, category: `marketing-growth`
+
+---
+
+## Style library fallback
+
+When `fetch_style` falls back to local, it reads from `assets/styles/{app_type}.json`. The agent doesn't need to know these directly; the tool returns them in the same format.
+
+Pre-curated layouts:
+- `dashboard-grid` — most common, 12-column grid, mix of cards + table + charts
+- `kanban` — column-based, status-stage flow (for CRM, content calendar)
+- `list-detail` — sidebar list + main detail pane (for comparison tools)
+- `form-heavy` — top form + bottom data view (for billing, surveys)
+
+---
+
+## Generated agent: variables expected by the templates
+
+When rendering `templates/generated-agent/*.tpl`, substitute these placeholders:
+
+| Placeholder | Source |
+|------------|--------|
+| `{{AGENT_ID}}` | agent generates: `vibe-{slug}-{6char-random}` |
+| `{{AGENT_DISPLAY_NAME}}` | from `agent_persona.name` |
+| `{{AGENT_EMOJI}}` | from `agent_persona.emoji` |
+| `{{AGENT_VIBE}}` | from `agent_persona.vibe` |
+| `{{AGENT_ROLE}}` | one-line role description |
+| `{{AGENT_TAGLINE}}` | one-line tagline for marketplace |
+| `{{AGENT_DESCRIPTION}}` | 1-2 paragraph description |
+| `{{AGENT_CATEGORY}}` | one of: content-operations / financial-trading / agent-building / marketing-growth / personal-assistant / engineering-development / research-intelligence |
+| `{{APP_NAME}}` | from parse step |
+| `{{APP_PURPOSE}}` | from parse step |
+| `{{DATA_SCHEMA_MARKDOWN}}` | markdown table summarizing entities + fields |
+| `{{WIDGETS_SUMMARY}}` | markdown list of widget titles + types |
+| `{{MODULE_ID}}` | returned by `register_dashboard_module` |
+| `{{DASHBOARD_URL}}` | returned by `publish_and_hire` |
+| `{{WORKSPACE_PATH}}` | from input metadata |
+| `{{WORKSPACE_SKILL_URL}}` | from CONFIG.md (TBD until colleague provides) |
+| `{{LOCALE}}` | from input metadata |
+| `{{FIRST_INTERACTION_HINT}}` | agent writes 1-2 sentences appropriate to the app type |
+| `{{BUILDER_ASSUMPTIONS}}` | bulleted list from parse step's `assumptions` |
+| `{{CREATED_AT_ISO}}` | current ISO timestamp |
+| `{{ORIGINAL_REQUEST}}` | the user's original natural-language request |

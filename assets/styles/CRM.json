@@ -1,0 +1,14 @@
+{
+  "palette": {
+    "primary": "#4F46E5",
+    "secondary": "#F59E0B",
+    "accent": "#10B981",
+    "neutral": "#F9FAFB",
+    "success": "#22C55E",
+    "warning": "#F59E0B",
+    "danger": "#EF4444"
+  },
+  "font_family": "'Inter', 'PingFang SC', system-ui, sans-serif",
+  "layout_recipe": "dashboard-grid",
+  "source_url": ""
+}

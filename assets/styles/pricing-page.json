@@ -1,0 +1,14 @@
+{
+  "palette": {
+    "primary": "#7C3AED",
+    "secondary": "#06B6D4",
+    "accent": "#F59E0B",
+    "neutral": "#FAFAFA",
+    "success": "#22C55E",
+    "warning": "#F59E0B",
+    "danger": "#EF4444"
+  },
+  "font_family": "'Inter', 'PingFang SC', system-ui, sans-serif",
+  "layout_recipe": "form-heavy",
+  "source_url": ""
+}
