@@ -308,6 +308,14 @@ async function loadLocalFallback(appType: AppType): Promise<StyleResult> {
 // MCP tool registration
 // ──────────────────────────────────────────────────────────────────
 
+/**
+ * High-level entry point: always returns a valid StyleResult.
+ * Used by both the MCP tool registration and direct callers (dry-run scripts, tests).
+ */
+export async function getStyleForAppType(appType: AppType): Promise<StyleResult> {
+  return (await tryOpenDesign(appType)) ?? (await loadLocalFallback(appType));
+}
+
 export function registerFetchStyleTool(server: McpServer): void {
   server.tool(
     "fetch_style",
@@ -321,9 +329,8 @@ export function registerFetchStyleTool(server: McpServer): void {
         .describe("Free-text app description (reserved for future search refinement)"),
     },
     async ({ app_type, description }) => {
-      void description; // reserved for future use
-      const result =
-        (await tryOpenDesign(app_type)) ?? (await loadLocalFallback(app_type));
+      void description;
+      const result = await getStyleForAppType(app_type);
       return {
         content: [
           {
